@@ -166,7 +166,7 @@ for (PathAnnotationObject ann : annotations) {
     ROI exclROI = GeometryTools.geometryToROI(exclG, roi.getImagePlane())
     double exclArea_um2 = exclROI.getArea() * um2PerPx
     double exclArea_mm2 = exclArea_um2 / 1e6
-    meas.put("Exclusive region area (mm^2)", exclArea_mm2)
+    meas.put("Exclusive Region area (mm^2)", exclArea_mm2)
 
     // Exclusive region mean (temp annotation)
     def tempAnn = new PathAnnotationObject(exclROI)
@@ -183,7 +183,7 @@ for (PathAnnotationObject ann : annotations) {
             break
         }
     }
-    meas.put("Exclusive region mean (${CHANNEL_LABEL})", exclMean)
+    meas.put("Exclusive Region mean (${CHANNEL_LABEL})", exclMean)
 
     def exclCells = hier.getObjectsForROI(PathCellObject.class, exclROI)
     meas.put("Exclusive Cell count (cells)", exclCells.size())
