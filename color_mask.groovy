@@ -7,14 +7,15 @@ import java.awt.Color
 import java.awt.geom.AffineTransform
 import qupath.lib.objects.PathAnnotationObject
 import qupath.lib.color.ColorMaps
+import javafx.application.Platform
 
 // ================= USER PARAMETERS =================
 
 // Viewer 縮放倍率
 final double TARGET_DOWNSAMPLE = 5.0
 
-// Measurement 欄位
-final String MEAS_NAME = "[Whole] inside mean (area-weighted, Channel 1)"
+// Non-exclusive measurement 欄位（不須填exclusive）
+final String MEAS_NAME = "Cell density (cells/mm^2)"
 
 // Overlay 解析度（image / DOWNSAMPLE）
 final double MASK_DOWNSAMPLE = 1.0
@@ -77,10 +78,11 @@ double centerY = (minY + maxY) / 2.0
 
 // ================= APPLY VIEW (FX THREAD SAFE) =================
 
-viewer.setDownsampleFactor(TARGET_DOWNSAMPLE)
-viewer.setCenterPixelLocation(centerX, centerY)
-viewer.repaint()
-
+Platform.runLater {
+    viewer.setDownsampleFactor(TARGET_DOWNSAMPLE)
+    viewer.setCenterPixelLocation(centerX, centerY)
+    viewer.repaint()
+}
 
 println "Viewer centered at (${(int)centerX}, ${(int)centerY}), downsample=${TARGET_DOWNSAMPLE}"
 
@@ -93,19 +95,82 @@ if (cmap == null) {
     cmap = ColorMaps.getDefaultColorMap()
 }
 
-// ================= MEASUREMENT RANGE =================
+// ================= MEASUREMENT (Exclusive-first) =================
 
-def measOf = { PathAnnotationObject a ->
-    a.getMeasurementList().getOrDefault(MEAS_NAME, Double.NaN) as double
+// Build candidate keys in priority order
+List<String> candidateKeys = []
+String base = MEAS_NAME?.trim()
+
+if (base == null || base.isEmpty()) {
+    println "MEAS_NAME is empty"
+    return
 }
 
+// If user already provided an Exclusive key, just use it (and also allow fallback to non-exclusive by stripping)
+if (base.toLowerCase().startsWith("exclusive ")) {
+    candidateKeys.add(base)
+    candidateKeys.add(base.substring("exclusive ".length()).trim())
+} else {
+    // Preferred exclusive naming from your measurement script
+    candidateKeys.add("Exclusive " + base)
+    // Fallback to non-exclusive
+    candidateKeys.add(base)
+}
+
+// Extra conservative fallbacks for common patterns (only if user asked region mean-like keys)
+if (base.toLowerCase().startsWith("region mean")) {
+    // e.g. "Region mean (Channel 1)" -> "Exclusive region mean (Channel 1)"
+    candidateKeys.add(0, "Exclusive " + base)
+}
+if (base.toLowerCase().startsWith("[") || base.toLowerCase().contains("]")) {
+    // e.g. "[Whole] inside mean ..." -> "Exclusive [Whole] inside mean ..."
+    candidateKeys.add(0, "Exclusive " + base)
+}
+
+// Measurement getter: try keys in order, pick first finite value
+def measOf = { PathAnnotationObject a ->
+    def ml = a.getMeasurementList()
+    for (String k : candidateKeys) {
+        if (k == null) continue
+        double v = ml.getOrDefault(k, Double.NaN) as double
+        if (Double.isFinite(v))
+            return v
+    }
+    return Double.NaN
+}
+
+// Also allow us to debug which key was used (optional)
+def keyUsedOf = { PathAnnotationObject a ->
+    def ml = a.getMeasurementList()
+    for (String k : candidateKeys) {
+        if (k == null) continue
+        double v = ml.getOrDefault(k, Double.NaN) as double
+        if (Double.isFinite(v))
+            return k
+    }
+    return null
+}
+
+// Collect values
 def vals = allAnns.collect { measOf(it) }
         .findAll { Double.isFinite(it) }
 
 if (vals.isEmpty()) {
-    println "No valid measurement values"
+    println "No valid measurement values for keys: " + candidateKeys
     return
 }
+
+// Quick sanity: show a few examples of which key is used
+int shown = 0
+for (a in allAnns) {
+    def k = keyUsedOf(a)
+    if (k != null) {
+        println "Example key used: '${k}'"
+        break
+    }
+}
+
+// ================= MEASUREMENT RANGE =================
 
 vals.sort()
 double vmin, vmax
@@ -126,7 +191,7 @@ if (SCALE_MODE.equalsIgnoreCase("data")) {
 if (vmax <= vmin)
     vmax = vmin + 1e-9
 
-println "Color scale: [${vmin}, ${vmax}]"
+println "Color scale: [${vmin}, ${vmax}] using keys priority: " + candidateKeys
 
 // ================= BUILD OVERLAY =================
 
@@ -179,6 +244,69 @@ allAnns.each { a ->
         g.draw(shape)
     }
 }
+// ================= DRAW SCALE BAR (FORCED & SAFE) =================
+
+// ---- 使用者設定 ----
+double SCALEBAR_UM = 1000
+int BAR_HEIGHT_PX = 50
+int MARGIN_PX = 90
+
+Color BAR_COLOR = Color.BLACK
+Color TEXT_COLOR = Color.BLACK
+String FONT_NAME = "Arial"
+int FONT_SIZE = 200
+boolean DRAW_SCALEBAR_TEXT = true
+
+// ---- pixel calibration ----
+def cal = imageData.getServer().getPixelCalibration()
+double umPerPx = cal.hasPixelSizeMicrons()
+        ? cal.getAveragedPixelSizeMicrons()
+        : 1.0
+
+// ---- 計算 bar 長度（overlay 座標）----
+double barLenPxD = SCALEBAR_UM / umPerPx / MASK_DOWNSAMPLE
+int barLenPx = (int)Math.round(barLenPxD)
+
+// ---- 防呆：bar 太長就縮到畫面 40% ----
+int maxBar = (int)(W * 0.4)
+if (barLenPx > maxBar) {
+    barLenPx = maxBar
+}
+
+// ---- 座標防呆：確保在畫布內 ----
+int x0 = MARGIN_PX
+int y0 = H - MARGIN_PX - BAR_HEIGHT_PX
+
+if (x0 < MARGIN_PX) x0 = MARGIN_PX
+if (y0 < MARGIN_PX) y0 = H - MARGIN_PX - BAR_HEIGHT_PX
+
+// ---- DEBUG（一定要留，確認有進來）----
+println "[ScaleBar] W=${W}, H=${H}, barLenPx=${barLenPx}, x0=${x0}, y0=${y0}"
+
+// ---- 畫一個半透明底，避免被白底吃掉（可移除）----
+g.setColor(new Color(255, 255, 255, 200))
+g.fillRect(x0 - 6, y0 - 28, barLenPx + 12, 36)
+
+// ---- 畫 bar --
+g.setColor(BAR_COLOR)
+g.fillRect(x0, y0, barLenPx, BAR_HEIGHT_PX)
+
+// ---- 畫文字 ----
+if (DRAW_SCALEBAR_TEXT) {
+    g.setFont(new java.awt.Font(FONT_NAME, java.awt.Font.PLAIN, FONT_SIZE))
+    g.setColor(TEXT_COLOR)
+
+    String label
+    if (SCALEBAR_UM >= 1000) {
+        double mm = SCALEBAR_UM / 1000.0
+        label = (mm == (int)mm) ? "${(int)mm} mm" : String.format("%.1f mm", mm)
+    } else {
+        label = "${(int)SCALEBAR_UM} µm"
+    }
+
+    g.drawString(label, x0, y0 - 10)
+}
+
 
 g.dispose()
 
