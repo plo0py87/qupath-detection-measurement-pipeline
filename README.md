@@ -1,164 +1,254 @@
 # qupath-detection-measurement-pipeline
 
-A QuPath Groovy script pipeline that converts **object-level detections** (cells, nuclei, cytoplasm)
-into **annotation-level quantitative measurements**, and generates **publication-ready heatmap
-visualizations** with correct hierarchical and exclusive-region handling.
+Converts QuPath object detections into annotation-level measurements and generates publication-ready heatmap visualizations.
 
-This project was developed to address a common limitation in QuPath workflows:
-annotation measurements that unintentionally mix parent and child regions, leading to
-misleading statistics and incorrect visualizations.
+This repository provides a research-oriented QuPath Groovy pipeline for aggregating object-level detections (cells, nuclei, cytoplasm) into annotation-level quantitative measurements, and visualizing these measurements as unbiased heatmaps with correct hierarchical handling.
 
 ---
 
 ## Overview
 
-The pipeline consists of **three scripts**, designed to be run sequentially or independently
-depending on the use case:
+The pipeline consists of three scripts:
 
-1. **Detection → Annotation Measurement**
-2. **Measurement → Heatmap Visualization**
-3. **Overlay / Viewer Reset Utility**
+1. Detection → Annotation-level measurement aggregation
+2. Measurement → Heatmap visualization
+3. Viewer / overlay reset utility
 
-Together, they enable a robust workflow from cell detection to quantitative region-level analysis
-and figure generation.
+Each script exposes a clearly defined **user-parameter block** at the top of the file, allowing reproducible and configurable analysis without modifying core logic.
 
 ---
 
 ## Scripts
 
-### 1. `mean_intensity_measurement.groovy`
+---
 
-**Purpose**
+## 1. `mean_intensity_measurement.groovy`
 
-- Aggregates **cell-level detections** into **annotation-level measurements**
-- Computes both **non-exclusive** and **exclusive** region statistics
-- Supports compartment-level analysis:
-  - Nucleus
-  - Cytoplasm
-  - Whole cell / region
+### Purpose
 
-**Key features**
+* Converts **cell-level detections** into **annotation-level measurements**
+* Computes both **non-exclusive** and **exclusive** statistics for hierarchical annotations
+* Supports compartment-aware quantification:
 
-- Computes:
-  - Region area
-  - Cell count & density
-  - Area-weighted mean intensities
-- Handles **annotation hierarchy correctly**:
-  - Parent annotations are split into:
-    - Full region (non-exclusive)
-    - Exclusive region = parent − direct child annotations
-- Generates parallel measurement sets:
-  - `[Whole]`, `[Nucleus]`, `[Cytoplasm]`
-  - `Exclusive [Whole]`, `Exclusive [Nucleus]`, `Exclusive [Cytoplasm]`
-- Designed to prevent double-counting when annotations do not fully tile the image
-
-**Typical use case**
-
-> Quantifying signal intensity and cell density in hierarchical brain regions
-> where subregions only partially cover the parent ROI.
+  * Whole region
+  * Nucleus
+  * Cytoplasm
 
 ---
 
-### 2. `color_mask.groovy`
+### User Parameters
 
-**Purpose**
+#### Channel selection and sampling
 
-- Converts annotation-level measurements into **heatmap-style overlays**
-- Produces figures suitable for **direct export** (paper / presentation)
+| Parameter       | Description                                                                                                                  |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `CHANNEL_INDEX` | Zero-based index of the image channel used for intensity measurement (e.g. `0` for first channel)                            |
+| `CHANNEL_LABEL` | Human-readable channel name used to identify and store measurements in QuPath (must match the channel label shown in QuPath) |
+| `DOWNSAMPLE`    | Downsample factor used when computing intensity measurements                                                                 |
 
-**Key features**
-
-- Exclusive-first measurement resolution:
-  - Automatically uses `Exclusive <measurement>` if available
-  - Falls back to non-exclusive measurements otherwise
-- Centralized user-parameter block:
-  - Measurement selection
-  - Color map
-  - Scale mode (data / percentile / manual)
-  - Overlay resolution
-- Handles large images safely (prevents Java heap overflow)
-- Generates:
-  - White background mask (image-independent visualization)
-  - Fixed-position scale bar (µm → mm auto-conversion)
-- Supports all QuPath runtime colormaps
-
-**Typical use case**
-
-> Creating unbiased regional heatmaps that reflect the *true* value of a region,
-> even when child annotations only partially cover the parent.
+> **Note**
+> Internally, intensity values are extracted based on `CHANNEL_INDEX`, while
+> `CHANNEL_LABEL` is used to locate or create the corresponding measurement keys
+> in the QuPath measurement table.
+> Both must refer to the same channel to avoid inconsistent results.
 
 ---
 
-### 3. `clear_mask_view.groovy`
+#### Area calibration
 
-**Purpose**
-
-- Restores the QuPath viewer to its default state after visualization
-
-**What it does**
-
-- Removes custom `BufferedImageOverlay` layers
-- Restores annotation visibility and fill settings
-- Safe to run repeatedly
-
-**Typical use case**
-
-> Quickly switching between raw image inspection and heatmap visualization
-> during exploratory analysis.
+Pixel calibration is automatically read from image metadata.
+If pixel size in microns is unavailable, a fallback value is used to ensure
+the script remains executable.
 
 ---
 
-## Design Principles
+### Measurements Generated
 
-- **Exclusive-region correctness**
-  - Parent annotation values reflect only uncovered regions when children exist
-- **Measurement reproducibility**
-  - All derived quantities are stored as QuPath measurements
-- **Visualization integrity**
-  - Heatmaps reflect actual quantitative values, not rendering artifacts
-- **Parameter centralization**
-  - All user-adjustable settings are grouped at the top of each script
-- **Fail-safe defaults**
-  - Prevents common pitfalls such as memory overflow from oversized overlays
+For each annotation, the script writes the following measurements into the QuPath
+measurement table:
+
+* **Region-level**
+
+  * `Region area (mm^2)`
+  * `Region mean (<CHANNEL_LABEL>)`
+
+* **Cell-based**
+
+  * `Cell count (cells)`
+  * `Cell density (cells/mm^2)`
+
+* **Compartment-based (area-weighted)**
+
+  * `[Whole] inside mean (<CHANNEL_LABEL>)`
+  * `[Whole] outside mean (<CHANNEL_LABEL>)`
+  * `[Nucleus] inside mean (<CHANNEL_LABEL>)`
+  * `[Nucleus] outside mean (<CHANNEL_LABEL>)`
+  * `[Cytoplasm] inside mean (<CHANNEL_LABEL>)`
+  * `[Cytoplasm] outside mean (<CHANNEL_LABEL>)`
+
+* **Exclusive counterparts**
+
+  * `Exclusive region mean (<CHANNEL_LABEL>)`
+  * `Exclusive cell count`
+  * `Exclusive cell density`
+  * `Exclusive [Whole] / [Nucleus] / [Cytoplasm]` means and areas
+
+Exclusive measurements are computed as:
+
+```
+exclusive region = parent annotation − direct child annotations
+```
+
+This ensures that parent annotation values reflect only uncovered regions
+when child annotations do not fully tile the parent.
 
 ---
 
-## Requirements
+## 2. `color_mask.groovy`
 
-- QuPath **0.6.x**
-- Existing cell detections with:
-  - Cell ROI
-  - (Optional) nucleus ROI
-  - Intensity measurements per channel
+### Purpose
+
+* Converts annotation-level measurements into **heatmap-style overlays**
+* Produces visualization suitable for direct export (figures / slides / manuscripts)
+
+---
+
+### User Parameters
+
+#### Viewer control
+
+| Parameter           | Description                                          |
+| ------------------- | ---------------------------------------------------- |
+| `TARGET_DOWNSAMPLE` | Viewer zoom level applied when rendering the overlay |
+
+---
+
+#### Measurement selection
+
+| Parameter   | Description                                             |
+| ----------- | ------------------------------------------------------- |
+| `MEAS_NAME` | Base measurement name to visualize (non-exclusive name) |
+
+The script automatically resolves measurements in the following priority order:
+
+```
+Exclusive <MEAS_NAME> → <MEAS_NAME>
+```
+
+This allows the same visualization script to work with or without exclusive measurements.
+
+---
+
+#### Overlay resolution
+
+| Parameter         | Description                                                                         |
+| ----------------- | ----------------------------------------------------------------------------------- |
+| `MASK_DOWNSAMPLE` | Resolution of the generated overlay (must be ≥ 1.0 to avoid excessive memory usage) |
+
+---
+
+#### Color scaling
+
+| Parameter         | Description                                           |
+| ----------------- | ----------------------------------------------------- |
+| `SCALE_MODE`      | Color scaling mode: `data`, `percentile`, or `manual` |
+| `P_LOW`, `P_HIGH` | Percentile bounds used when `SCALE_MODE = percentile` |
+| `V_MIN`, `V_MAX`  | Fixed range used when `SCALE_MODE = manual`           |
+| `COLORMAP_NAME`   | Name of the QuPath colormap used for rendering        |
+
+Supported colormaps (queried from runtime):
+
+```
+"Blue", "Cyan", "Gray", "Green", "Inferno", "Jet",
+"Magenta", "Magma", "Plasma", "Red", "Svidro2",
+"Viridis", "Yellow"
+```
+
+---
+
+#### Annotation rendering
+
+| Parameter      | Description                         |
+| -------------- | ----------------------------------- |
+| `DRAW_OUTLINE` | Whether to draw annotation borders  |
+| `OUTLINE_PX`   | Stroke width of annotation outlines |
+
+---
+
+#### Background and visibility
+
+| Parameter             | Description                                                       |
+| --------------------- | ----------------------------------------------------------------- |
+| `SIMULATE_HIDE_IMAGE` | Draws a white background to decouple visualization from raw image |
+| `BACKGROUND_COLOR`    | Background color used when hiding the image                       |
+| `HIDE_QP_ANNOS`       | Hides native QuPath annotation rendering                          |
+
+---
+
+#### Scale bar
+
+| Parameter                | Description                                                              |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `SCALEBAR_UM`            | Physical length of scale bar (automatically converts to mm if ≥ 1000 µm) |
+| `SCALEBAR_BAR_HEIGHT_PX` | Height of scale bar in overlay pixels                                    |
+| `SCALEBAR_MARGIN_PX`     | Margin from image edge                                                   |
+| `SCALEBAR_COLOR`         | Scale bar color                                                          |
+| `SCALEBAR_TEXT_COLOR`    | Scale bar label color                                                    |
+| `SCALEBAR_FONT_NAME`     | Font used for scale bar label                                            |
+| `SCALEBAR_FONT_SIZE`     | Font size for scale bar label                                            |
+| `DRAW_SCALEBAR_TEXT`     | Whether to draw the scale bar label                                      |
+
+The scale bar is always rendered at a **fixed position in the lower-left corner**
+to ensure consistent figure layout.
+
+---
+
+## 3. `clear_mask_view.groovy`
+
+### Purpose
+
+* Restores the QuPath viewer to its default state after visualization
+
+---
+
+### User Parameters
+
+This script does not expose user-adjustable parameters.
+
+It safely:
+
+* Removes all `BufferedImageOverlay` layers
+* Restores annotation visibility
+* Can be executed repeatedly without side effects
 
 ---
 
 ## Typical Workflow
 
-1. Run cell detection in QuPath
-2. Draw hierarchical annotations (parent / child regions)
+1. Perform cell detection in QuPath
+2. Create hierarchical annotations
 3. Run `mean_intensity_measurement.groovy`
 4. Select a measurement of interest
 5. Run `color_mask.groovy` to generate heatmap
 6. Export view
-7. Run `clear_mask_view.groovy` to reset viewer
+7. Run `clear_mask_view.groovy` to reset the viewer
 
 ---
 
 ## Notes
 
-- This pipeline intentionally avoids hard assumptions about annotation tiling
-- Designed for research settings where **partial region coverage is the norm**
-- Particularly suitable for neuroanatomy, histology, and spatial biology data
+* Designed for datasets where **partial region coverage is expected**
+* Avoids implicit assumptions about annotation tiling
+* All derived values are stored as QuPath measurements for reproducibility
 
 ---
 
 ## License
 
-MIT License (or specify if different)
+MIT License
 
 ---
 
 ## Author
 
-Developed as part of a research-oriented QuPath analysis workflow.
+Developed as part of a research-oriented QuPath image analysis workflow.
