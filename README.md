@@ -1,4 +1,5 @@
 # qupath-detection-measurement-pipeline
+<img width="1299" height="821" alt="333" src="https://github.com/user-attachments/assets/132c811b-1913-42a7-b7b6-6d7b82284f44" />
 
 Converts QuPath object detections into annotation-level measurements and generates publication-ready heatmap visualizations.
 
