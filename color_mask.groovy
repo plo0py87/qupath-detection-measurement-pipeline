@@ -28,10 +28,10 @@ final double P_HIGH = 98
 final double V_MIN = 0
 final double V_MAX = 1
 
-final String COLORMAP_NAME = "Verdis" // Available colormaps: "Blue", "Cyan", "Gray", "Green", "Inferno", "Jet", "Magenta", "Magma", "Plasma", "Red", "Svidro2", "Viridis", "Yellow"
+final String COLORMAP_NAME = "Yellow" // Available colormaps: "Blue", "Cyan", "Gray", "Green", "Inferno", "Jet", "Magenta", "Magma", "Plasma", "Red", "Svidro2", "Viridis", "Yellow"
 
 // ---------- Annotation drawing ----------
-final boolean DRAW_OUTLINE = true
+final boolean DRAW_OUTLINE = false
 final float OUTLINE_PX = 2f
 
 // ---------- Background ----------
@@ -43,13 +43,13 @@ final boolean HIDE_QP_ANNOS = false
 
 // ---------- Scale bar ----------
 final double SCALEBAR_UM = 1000          // >=1000 → mm
-final int SCALEBAR_BAR_HEIGHT_PX = 50
+final int SCALEBAR_BAR_HEIGHT_PX = 30
 final int SCALEBAR_MARGIN_PX = 90
 
 final Color SCALEBAR_COLOR = Color.BLACK
 final Color SCALEBAR_TEXT_COLOR = Color.BLACK
 final String SCALEBAR_FONT_NAME = "Arial"
-final int SCALEBAR_FONT_SIZE = 200
+final int SCALEBAR_FONT_SIZE = 140
 final boolean DRAW_SCALEBAR_TEXT = true
 
 // ==================================================
